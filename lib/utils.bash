@@ -69,12 +69,11 @@ download_release() {
 	# Add 'v' prefix if not present
 	[[ "$version" = v* ]] || version="v${version}"
 
-	# Construct download URL according to official installer format
-	local download_url="${SOLANA_DOWNLOAD_ROOT}/${version}/agave-install-init-${arch}"
+	# Construct download URL for the release tarball
+	local download_url="${SOLANA_DOWNLOAD_ROOT}/${version}/solana-release-${arch}.tar.bz2"
 
 	echo "* Downloading $TOOL_NAME release $version..."
 	curl "${curl_opts[@]}" -o "$filename" "$download_url" || fail "Could not download $download_url"
-	chmod +x "$filename"
 }
 
 install_version() {
@@ -88,16 +87,31 @@ install_version() {
 
 	(
 		mkdir -p "$install_path"
-		local installer="$ASDF_DOWNLOAD_PATH/agave-install-init"
+		local release_file="$ASDF_DOWNLOAD_PATH/solana-release.tar.bz2"
+		local extract_path="$ASDF_DOWNLOAD_PATH/extract"
 
-		# Run the installer
-		"$installer" || fail "Installation failed"
+		# Check if the release file exists
+		if [ ! -f "$release_file" ]; then
+			fail "Release file not found: $release_file. Please run download first."
+		fi
+
+		# Create temporary directory for extraction
+		mkdir -p "$extract_path"
+
+		# Extract the release tarball
+		tar -xjf "$release_file" -C "$extract_path" || fail "Could not extract $release_file"
+
+		# Copy all files from the bin directory to the install path
+		cp -a "$extract_path/solana-release/bin/." "$install_path/" || fail "Could not copy binaries"
+
+		# Clean up
+		rm -rf "$extract_path"
 
 		# Verify installation
 		local tool_cmd
 		tool_cmd="$(echo "$TOOL_TEST" | cut -d' ' -f1)"
-		if ! command -v "$tool_cmd" >/dev/null; then
-			fail "Expected $tool_cmd to be available in PATH after installation."
+		if [ ! -x "$install_path/$tool_cmd" ]; then
+			fail "Expected $install_path/$tool_cmd to be executable."
 		fi
 
 		echo "$TOOL_NAME $version installation was successful!"

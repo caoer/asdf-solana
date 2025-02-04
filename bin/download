@@ -10,8 +10,8 @@ source "${plugin_dir}/lib/utils.bash"
 
 mkdir -p "$ASDF_DOWNLOAD_PATH"
 
-# Download the agave installer
-installer_file="$ASDF_DOWNLOAD_PATH/agave-install-init"
+# Download the release tarball
+release_file="$ASDF_DOWNLOAD_PATH/solana-release.tar.bz2"
 
-# Download installer to the download directory
-download_release "$ASDF_INSTALL_VERSION" "$installer_file"
+# Download release to the download directory
+download_release "$ASDF_INSTALL_VERSION" "$release_file"
