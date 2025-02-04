@@ -2,10 +2,12 @@
 
 set -euo pipefail
 
-# TODO: Ensure this is the correct GitHub homepage where releases can be downloaded for solana.
-GH_REPO="https://github.com/anza-xyz/agave"
 TOOL_NAME="solana"
 TOOL_TEST="solana --version"
+
+# Default download root can be overridden by SOLANA_DOWNLOAD_ROOT env var
+SOLANA_DOWNLOAD_ROOT="${SOLANA_DOWNLOAD_ROOT:-https://github.com/anza-xyz/agave/releases/download}"
+GH_LATEST_RELEASE="https://api.github.com/repos/anza-xyz/agave/releases/latest"
 
 fail() {
 	echo -e "asdf-$TOOL_NAME: $*"
@@ -14,38 +16,65 @@ fail() {
 
 curl_opts=(-fsSL)
 
-# NOTE: You might want to remove this if solana is not hosted on GitHub releases.
-if [ -n "${GITHUB_API_TOKEN:-}" ]; then
-	curl_opts=("${curl_opts[@]}" -H "Authorization: token $GITHUB_API_TOKEN")
-fi
-
 sort_versions() {
 	sed 'h; s/[+-]/./g; s/.p\([[:digit:]]\)/.z\1/; s/$/.z/; G; s/\n/ /' |
 		LC_ALL=C sort -t. -k 1,1 -k 2,2n -k 3,3n -k 4,4n -k 5,5n | awk '{print $2}'
 }
 
-list_github_tags() {
-	git ls-remote --tags --refs "$GH_REPO" |
-		grep -o 'refs/tags/.*' | cut -d/ -f3- |
-		sed 's/^v//' # NOTE: You might want to adapt this sed to remove non-version strings from tags
+get_machine_arch() {
+	local _ostype _cputype
+	_ostype="$(uname -s)"
+	_cputype="$(uname -m)"
+
+	case "$_ostype" in
+		Linux)
+			_ostype=unknown-linux-gnu
+			;;
+		Darwin)
+			if [[ $_cputype = arm64 ]]; then
+				_cputype=aarch64
+			fi
+			_ostype=apple-darwin
+			;;
+		*)
+			fail "machine architecture is currently unsupported"
+			;;
+	esac
+	echo "${_cputype}-${_ostype}"
 }
 
 list_all_versions() {
-	# TODO: Adapt this. By default we simply list the tag names from GitHub releases.
-	# Change this function if solana has other means of determining installable versions.
-	list_github_tags
+	# Fetch the latest release version from GitHub API
+	local release_file
+	release_file="$(mktemp)"
+	curl "${curl_opts[@]}" "$GH_LATEST_RELEASE" > "$release_file"
+
+	local version
+	version=$(grep -m 1 \"tag_name\": "$release_file" | sed -ne 's/^ *"tag_name": "\([^"]*\)",$/\1/p')
+	rm -f "$release_file"
+
+	if [ -z "$version" ]; then
+		fail "Unable to determine latest version"
+	fi
+
+	echo "$version"
 }
 
 download_release() {
-	local version filename url
-	version="$1"
-	filename="$2"
+	local version="$1"
+	local filename="$2"
+	local arch
+	arch="$(get_machine_arch)"
 
-	# TODO: Adapt the release URL convention for solana
-	url="$GH_REPO/archive/v${version}.tar.gz"
+	# Add 'v' prefix if not present
+	[[ "$version" = v* ]] || version="v${version}"
+
+	# Construct download URL according to official installer format
+	local download_url="${SOLANA_DOWNLOAD_ROOT}/${version}/agave-install-init-${arch}"
 
 	echo "* Downloading $TOOL_NAME release $version..."
-	curl "${curl_opts[@]}" -o "$filename" -C - "$url" || fail "Could not download $url"
+	curl "${curl_opts[@]}" -o "$filename" "$download_url" || fail "Could not download $download_url"
+	chmod +x "$filename"
 }
 
 install_version() {
@@ -59,16 +88,20 @@ install_version() {
 
 	(
 		mkdir -p "$install_path"
-		cp -r "$ASDF_DOWNLOAD_PATH"/* "$install_path"
+		local installer="$ASDF_DOWNLOAD_PATH/agave-install-init"
 
-		# TODO: Assert solana executable exists.
+		# Run the installer
+		"$installer" || fail "Installation failed"
+
+		# Verify installation
 		local tool_cmd
 		tool_cmd="$(echo "$TOOL_TEST" | cut -d' ' -f1)"
-		test -x "$install_path/$tool_cmd" || fail "Expected $install_path/$tool_cmd to be executable."
+		if ! command -v "$tool_cmd" >/dev/null; then
+			fail "Expected $tool_cmd to be available in PATH after installation."
+		fi
 
 		echo "$TOOL_NAME $version installation was successful!"
 	) || (
-		rm -rf "$install_path"
 		fail "An error occurred while installing $TOOL_NAME $version."
 	)
 }
